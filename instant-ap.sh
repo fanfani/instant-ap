@@ -9,8 +9,8 @@ DNSMASQ_CONF="./dnsmasq.conf"
 # First of all, some little checks
 ID=$(id -u)
 if [ $ID -ne 0 ] ; then echo -e "\nERROR: you must be root to run this script!\n" ; exit 1 ; fi
-which dnsmasq > /dev/null ; if [ $? -eq 0 ] ; then echo -e "\nERROR: dnsmasq is needed to run this script!\n" ; exit 1 ; fi
-which hostapd > /dev/null ; if [ $? -eq 0 ] ; then echo -e "\nERROR: hostapd is needed to run this script!\n" ; exit 1 ; fi
+which dnsmasq > /dev/null ; if [ $? -ne 0 ] ; then echo -e "\nERROR: dnsmasq is needed to run this script!\n" ; exit 1 ; fi
+which hostapd > /dev/null ; if [ $? -ne 0 ] ; then echo -e "\nERROR: hostapd is needed to run this script!\n" ; exit 1 ; fi
 
 # Let's roll
 start() {
@@ -61,6 +61,9 @@ start() {
 		echo
 		grep -v "^#" $HOSTAPD_CONF
 		echo
+		# memo
+		# nmcli nm wifi off
+		# rfkill unblock wlan
 		hostapd -B $HOSTAPD_CONF
 	else
 		echo
@@ -101,7 +104,7 @@ status() {
 
 	if [ $? -eq 0 ]
 	then
-		OUT_IF_SETUP=$(ifconfig $OUT_IF | grep "inet addr:"| sed -e 's/^ *//g')
+		OUT_IF_SETUP=$(ifconfig $OUT_IF |  grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sed -e 's/^ *//g')
 
 		if [ -z "$OUT_IF_SETUP" ]
 		then
@@ -120,7 +123,7 @@ status() {
 
 	if [ $? -eq 0 ]
 	then
-		IN_IF_SETUP=$(ifconfig $IN_IF | grep "inet addr:"| sed -e 's/^ *//g')
+		IN_IF_SETUP=$(ifconfig $IN_IF |  grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sed -e 's/^ *//g')
 
 		if [ -z "$IN_IF_SETUP" ]
 		then
