@@ -144,7 +144,8 @@ status() {
 		echo
 	else
 		DNSMASQ_PID=$(pidof dnsmasq)
-		echo "- OK: dnsmasq is running. Pid: $DNSMASQ_PID"
+		N_CLIENTS=$(iw dev wlan0 station dump | grep -i station | wc -l)
+		echo "- OK: dnsmasq is running. Pid: $DNSMASQ_PID  ($N_CLIENTS client(s) connected)"
 		echo
 	fi
 
