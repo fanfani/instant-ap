@@ -1,10 +1,25 @@
 #!/bin/bash
 
+# interfaces setup
 IN_IF=wlan0
 OUT_IF=ppp0
 IN_ADDR="10.0.0.1"
+
+# hostapd setup
+SSID="INSTANT-AP"
+CHANNEL="1"
+WPA2_PASSPHRASE="yourverysecurepassphrase" # leave blank for open ap
 HOSTAPD_CONF="./hostapd.conf"
+
+# dnsmasq setup
+DHCP_RANGE_START="10.0.0.101"
+DHCP_RANGE_STOP="10.0.0.150"
+LEASE_TIME="12h"
+NAMESERVER_A=8.8.8.8 # nameservers to send to the clients
+NAMESERVER_B=8.8.4.4 # nameservers to send to the clients
 DNSMASQ_CONF="./dnsmasq.conf"
+
+# ----------------------------------------------------------------------
 
 # First of all, some little checks
 ID=$(id -u)
@@ -14,6 +29,21 @@ which hostapd > /dev/null ; if [ $? -ne 0 ] ; then echo -e "\nERROR: hostapd is 
 
 # Let's roll
 start() {
+
+    # disable handling of wireless interface by NetworkManager
+    if [ -z "$(ps -e | grep networkmanager)" ]
+    then
+        nmcli nm wifi off &> /dev/null || nmcli radio wifi off &> /dev/null
+        CMD1_EX=$?
+        rfkill unblock wlan
+        CMD2_EX=$?
+        if [ $(( $CMD1_EX + $CMD2_EX )) -eq 0 ]
+        then
+            echo "- Interface $IN_IF is no longer managed by NetworkManager"
+        else
+            echo "ERROR: Unable to unlock interface $IN_IF (still managed by NetworkManager)"
+        fi
+    fi
 
 	# Initial wifi interface configuration
 	echo
@@ -42,29 +72,57 @@ start() {
 	# Start dnsmasq
 	if [ -z "$(ps -e | grep dnsmasq)" ]
 	then
+
+        # write conf file for dnsmasq
+        echo "interface=$IN_IF" > $DNSMASQ_CONF
+        echo "no-resolv" >> $DNSMASQ_CONF
+        echo "dhcp-range=$DHCP_RANGE_START,$DHCP_RANGE_STOP,$LEASE_TIME" >> $DNSMASQ_CONF
+        echo "server=$NAMESERVER_A" >> $DNSMASQ_CONF
+        echo "server=$NAMESERVER_B" >> $DNSMASQ_CONF
+        
 		echo
 		echo "- Starting dnsmasq with the following setup:"
 		echo
 		grep -v "^#" $DNSMASQ_CONF
 		echo
-		dnsmasq -C $DNSMASQ_CONF
+		
+        dnsmasq -C $DNSMASQ_CONF
+
 	else
 		echo
 		echo "- ERROR: dnsmasq is already running!"
+
+        if [ ! -z "$(ps -e | grep dnsmasq | grep -i networkmanager)" ]
+        then
+            echo "INFO: dnsmasq is being summoned by NetworkManager, please comment out the line 'dns=dnsmasq' in NetworkManager conf file and restart it"
+        fi
 	fi
 
 	# Start hostapd
 	if [ -z "$(ps -e | grep hostapd)" ]
 	then
+    
+        # write conf file for hostapd
+        echo "interface=$IN_IF" > $HOSTAPD_CONF
+        echo "ssid=$SSID" >> $HOSTAPD_CONF
+        echo "channel=$CHANNEL" >> $HOSTAPD_CONF
+        if [ ! -z $WPA2_PASSPHRASE ]
+        then
+            echo "auth_algs=1" >> $HOSTAPD_CONF
+            echo "wpa=2" >> $HOSTAPD_CONF
+            echo "wpa_key_mgmt=WPA-PSK" >> $HOSTAPD_CONF  
+            echo "rsn_pairwise=CCMP" >> $HOSTAPD_CONF
+            echo "wpa_passphrase=$WPA2_PASSPHRASE" >> $HOSTAPD_CONF
+        fi
+    
 		echo
 		echo "- Starting hostapd with the following setup:"
 		echo
 		grep -v "^#" $HOSTAPD_CONF
 		echo
-		# memo
-		# nmcli nm wifi off
-		# rfkill unblock wlan
+        
 		hostapd -B $HOSTAPD_CONF
+        
 	else
 		echo
 		echo "ERROR: hostapd is already running!"
@@ -76,21 +134,35 @@ start() {
 stop() {
 
 	echo
-	echo "- flushing iptables rules"
+	
+    echo "- flushing iptables rules"
 	iptables --flush && iptables --table nat --flush
 	echo
-	echo "- disabling ipv4 forwarding"
+	
+    echo "- disabling ipv4 forwarding"
 	sysctl -w net.ipv4.ip_forward=0 > /dev/null
 	echo
-	echo "- killing dnsmasq"
+	
+    echo "- killing dnsmasq"
 	killall -9 dnsmasq
+    rm -f $DNSMASQ_CONF
 	echo
-	echo "- killing hostapd"
+	
+    echo "- killing hostapd"
 	killall -9 hostapd
+    rm -f $HOSTAPD_CONF
 	echo
-	echo "- bringing down interface $IN_IF"
+	
+    echo "- bringing down interface $IN_IF"
 	ifconfig $IN_IF down
 	ifconfig mon.$IN_IF down
+    echo
+    
+    if [ -z "$(ps -e | grep networkmanager)" ]
+    then
+        nmcli nm wifi on &> /dev/null || nmcli radio wifi on &> /dev/null
+        echo "- giving back Networmanager control over interface $IN_IF"
+    fi
 	echo
 
 }
@@ -144,7 +216,7 @@ status() {
 		echo
 	else
 		DNSMASQ_PID=$(pidof dnsmasq)
-		N_CLIENTS=$(iw dev wlan0 station dump | grep -i station | wc -l)
+		N_CLIENTS=$(iw dev $IN_IF station dump | grep -i station | wc -l)
 		echo "- OK: dnsmasq is running. Pid: $DNSMASQ_PID  ($N_CLIENTS client(s) connected)"
 		echo
 	fi
